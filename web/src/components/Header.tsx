@@ -44,7 +44,7 @@ export function Header() {
           </NavLink>
         ))}
         <span className="mx-1 h-5 w-px bg-[#374151]" aria-hidden />
-        {[["/proof", "Proof"], ["/export", "Export"]].map(([to, l]) => (
+        {[["/export", "Export"]].map(([to, l]) => (
           <NavLink key={to} to={to} className={({ isActive }) => clsx("whitespace-nowrap rounded-full px-3 py-1.5 text-sm no-underline", isActive ? "bg-white font-semibold text-ink" : "text-[#D1D5DB] hover:text-white")}>
             {l}
           </NavLink>

@@ -36,6 +36,7 @@ class AttrMeta:
     vocab: set = field(default_factory=set)
     known_numbers: list = field(default_factory=list)
     known_dims: list = field(default_factory=list)
+    size_like: bool = False          # column holds sizes in mixed notation (e.g. "D16 L200", "M6x20")
 
 
 @dataclass
@@ -57,9 +58,10 @@ def analyze_text(raw: str, syn_key) -> Analyzed:
 
 
 def _group_matches(group: str, col: str, syn_key) -> bool:
-    g = basic_clean(group)
-    c = normalize_text(col, syn_key)
-    return bool(g) and (g == c or g in c.split() or g in c)
+    """A synonym group feeds an attribute's vocabulary only if the group name is the column name or one of its words."""
+    g = basic_clean(group).replace("_", " ")
+    c = normalize_text(col.replace("_", " "), syn_key)
+    return bool(g) and (g == c or g in c.split())
 
 
 def build_parts(master: pd.DataFrame | None, bom: pd.DataFrame, leaf_parts: set[str], attribute_columns: list[str],
@@ -126,7 +128,7 @@ def build_parts(master: pd.DataFrame | None, bom: pd.DataFrame, leaf_parts: set[
             kind = "number"
         else:
             kind = "text"
-        am = AttrMeta(a, kind)
+        am = AttrMeta(a, kind, size_like=n_dim > 0)
         if kind == "dim":
             am.known_dims = list({parse_dim_value(v) for v in vals if parse_dim_value(v)})
         elif kind == "number":
@@ -165,6 +167,8 @@ def compare_attr(meta: AttrMeta, part_val, item: Analyzed) -> dict:
     """Return {result: agree|differ|missing, item_val, part_val, why}."""
     if part_val is None:
         return {"result": "missing", "item_val": None, "part_val": None, "why": "not stated in the material master"}
+    if meta.kind != "number" and parse_dim_value(part_val) is not None:
+        meta = AttrMeta(meta.name, "dim", meta.vocab, size_like=True)
     if meta.kind == "dim":
         pv = parse_dim_value(part_val)
         if pv is None:
@@ -186,12 +190,22 @@ def compare_attr(meta: AttrMeta, part_val, item: Analyzed) -> dict:
         if found:
             return {"result": "differ", "item_val": ", ".join(_fmt_num(k) for k in found), "part_val": part_val, "why": "different value"}
         return {"result": "missing", "item_val": None, "part_val": part_val, "why": "not stated on the invoice"}
-    # text
-    part_terms = {t for t in tokens(part_val_norm(part_val, meta)) if t in meta.vocab}
-    item_terms = item.tokens & meta.vocab
+    # text (with a numeric signature for values such as "D16 L200" or "1.5 kW")
+    # single letters (fragments of codes like "c45" or "d120") are too ambiguous to disagree on
+    part_terms = {t for t in tokens(part_val_norm(part_val, meta)) if t in meta.vocab and not (len(t) == 1 and t.isalpha())}
+    item_terms = {t for t in item.tokens & meta.vocab if not (len(t) == 1 and t.isalpha())}
+    pnums = extract_numbers(basic_clean(part_val)) if meta.size_like else []
+    if len(pnums) >= 2:
+        same = [d for d in item.dims if len(d) == len(pnums)]
+        if same and not any(dims_equal(tuple(pnums), d) for d in same):
+            return {"result": "differ", "item_val": _fmt_dim(same[0]), "part_val": part_val, "why": "different size"}
+        if same:
+            return {"result": "agree", "item_val": _fmt_dim(same[0]), "part_val": part_val, "why": ""}
     if not part_terms:
         return {"result": "missing", "item_val": " ".join(sorted(item_terms)) or None, "part_val": part_val, "why": "master value not recognised"}
     if not item_terms:
+        if pnums and all(any(approx_equal(p, x, 0.005) for x in item.numbers) for p in pnums) and len(pnums) >= 2:
+            return {"result": "agree", "item_val": " ".join(_fmt_num(p) for p in pnums), "part_val": part_val, "why": ""}
         return {"result": "missing", "item_val": None, "part_val": part_val, "why": "not stated on the invoice"}
     extra_item, extra_part = item_terms - part_terms, part_terms - item_terms
     if extra_item and extra_part:
@@ -336,7 +350,7 @@ def run_rungs(items: pd.DataFrame, parts: pd.DataFrame, meta: dict[str, AttrMeta
         elif lr["kind"] == "notbom":
             notbom[lr["value"]["item_key"]] = lr
 
-    item_an = [analyze_text(f"{d} {pn or ''}", syn_key) for d, pn in zip(items["description"], items["supplier_pn"])]
+    item_an = [analyze_text(str(d or ""), syn_key) for d in items["description"]]
     idx, sc = text_similarity_topk(items["norm_desc"].tolist(), parts["match_text"].tolist(), k)
 
     results = []

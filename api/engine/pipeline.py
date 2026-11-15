@@ -120,7 +120,7 @@ def _ai_rung(items, parts, meta, results, rules, syn_key, ai) -> int:
             res["ai"] = {"note": out.get("reason") or "", "best": None, "rejected_by_rules": False, "attributes": ai_attrs}
             continue
         # re-check with the rules, with AI-read attributes filling only what the rules could not read
-        an = analyze_text(f"{it['description']} {it['supplier_pn'] or ''}", syn_key)
+        an = analyze_text(str(it["description"] or ""), syn_key)
         pr_ = pidx.loc[best]
         hard = applicable_hard(rules, meta, cat_attrs, pr_["category"])
         conflict = None

@@ -16,10 +16,14 @@ def _s(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.Series([None] * len(df), index=df.index, dtype=object)
 
 
+def _blank(v) -> bool:
+    return v is None or (isinstance(v, float) and np.isnan(v)) or str(v).strip() in ("", "nan", "NaN", "None", "NaT", "<NA>")
+
+
 def _clean_str(series: pd.Series) -> pd.Series:
-    s = series.astype(object).where(series.notna(), None)
-    s = s.map(lambda v: None if v is None or str(v).strip() in ("", "nan", "None", "NaT") else str(v).strip())
-    return s
+    """Strings stripped; anything blank becomes a real None (never NaN, never the text 'nan')."""
+    vals = [None if _blank(v) else str(v).strip() for v in series.tolist()]
+    return pd.Series(vals, index=series.index, dtype=object)
 
 
 def keyword_mask(text: pd.Series, keywords: list[str]) -> pd.Series:
@@ -36,13 +40,13 @@ def prepare_lines(spend: pd.DataFrame, rate_fn, syn_key, rules: dict) -> pd.Data
     n = len(df)
     out = pd.DataFrame(index=df.index)
     lid = _clean_str(_s(df, "line_id"))
-    out["line_id"] = [v if v else f"L{i+1:06d}" for i, v in enumerate(lid)]
+    out["line_id"] = [v if v else f"L{i+1:06d}" for i, v in enumerate(lid.tolist())]
     if out["line_id"].duplicated().any():
         out["line_id"] = out["line_id"] + "#" + out.groupby("line_id").cumcount().astype(str)
     sid = _clean_str(_s(df, "supplier_id"))
     sname = _clean_str(_s(df, "supplier_name"))
-    out["supplier_name"] = [a or b or "(unknown supplier)" for a, b in zip(sname, sid)]
-    out["supplier_key"] = [basic_clean(a) if a else basic_clean(b or "unknown") for a, b in zip(sid, sname)]
+    out["supplier_name"] = [a or b or "(unknown supplier)" for a, b in zip(sname.tolist(), sid.tolist())]
+    out["supplier_key"] = [basic_clean(a) if a else basic_clean(b or "unknown") for a, b in zip(sid.tolist(), sname.tolist())]
     out["supplier_pn"] = _clean_str(_s(df, "supplier_part_no"))
     out["description"] = _clean_str(_s(df, "description")).fillna("")
     out["qty"] = pd.to_numeric(_s(df, "qty"), errors="coerce")
@@ -80,7 +84,7 @@ def prepare_lines(spend: pd.DataFrame, rate_fn, syn_key, rules: dict) -> pd.Data
     out["is_service"] = keyword_mask(cc, svc_kw) | keyword_mask(out["norm_desc"], svc_kw) | keyword_mask(out["description"].map(basic_clean), svc_kw)
     out["is_shop_cc"] = keyword_mask(cc, rules.get("shop_supply_cost_centers", [])) | keyword_mask(out["norm_desc"], rules.get("shop_supply_keywords", []))
     # item key
-    pn_norm = out["supplier_pn"].map(lambda v: re.sub(r"[^a-z0-9]", "", str(v).lower()) if v else None)
+    pn_norm = [None if _blank(v) else (re.sub(r"[^a-z0-9]", "", str(v).lower()) or None) for v in out["supplier_pn"].tolist()]
     out["item_key"] = [f"{s}|pn:{p}" if p else f"{s}|d:{d}" for s, p, d in zip(out["supplier_key"], pn_norm, out["norm_desc"])]
     out["item_id"] = out["item_key"].map(lambda k: "I" + hashlib.sha1(k.encode()).hexdigest()[:10])
     return out

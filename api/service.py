@@ -23,6 +23,8 @@ _results: "OrderedDict[int, dict]" = OrderedDict()
 _lock = threading.Lock()
 _run_lock: dict[int, threading.Lock] = {}
 
+ENGINE_VERSION = "2"  # bump when matching logic changes, so cached matching results are recomputed
+
 SINGLE_TYPES = ["bom", "products", "master", "volumes", "suppliers", "conversions", "fx", "xrefs", "answer_key"]
 
 
@@ -144,7 +146,7 @@ def project_readiness(pid: int) -> dict:
 # --- runs --------------------------------------------------------------------
 
 def _stage1_key(pid: int, rv: int, learned: list[dict], ai_on: bool) -> str:
-    raw = json.dumps({"d": data_signature(pid), "r": rv, "l": [(l["id"], l["kind"]) for l in learned if l["kind"] != "unit"], "ai": ai_on},
+    raw = json.dumps({"e": ENGINE_VERSION, "d": data_signature(pid), "r": rv, "l": [(l["id"], l["kind"]) for l in learned if l["kind"] != "unit"], "ai": ai_on},
                      sort_keys=True)
     return hashlib.sha1(raw.encode()).hexdigest()[:16]
 

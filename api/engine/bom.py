@@ -17,6 +17,7 @@ def top_level_products(bom: pd.DataFrame, products: pd.DataFrame | None) -> pd.D
         if "status" not in p:
             p["status"] = "active"
         p["status"] = p["status"].fillna("active").astype(str).str.lower()
+        p.loc[p["status"].str.contains("discontinu|inactive|obsolete|end of life|eol|phased out|auslauf", regex=True), "status"] = "discontinued"
         if "family" not in p:
             p["family"] = None
         return p[["product_id", "name", "family", "status"]].drop_duplicates("product_id")

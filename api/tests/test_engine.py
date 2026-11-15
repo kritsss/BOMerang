@@ -179,3 +179,44 @@ def test_guardrails():
     assert numbers_supported("12.7", "rod 0.5 in")          # mm <-> inch
     assert filter_attributes({"size": "8x999", "material": "stainless"}, "shaft 8x120 Edelstahl", ["size", "material"]) == {"material": "stainless"}
     assert not explanation_ok("Costs 42 more", "price 3.10")
+
+
+def test_blank_supplier_part_numbers_do_not_pool_items():
+    import numpy as np
+    from engine.items import build_items, prepare_lines
+    from engine.normalize import fx_lookup, synonym_key
+    from engine.rules import default_rules
+    r = default_rules()
+    sp = pd.DataFrame({"supplier_name": ["S", "S", "S"], "supplier_part_no": [np.nan, "", None], "description": ["housing A1", "housing B2", "housing A1"],
+                       "qty": [1, 1, 1], "unit_price": [1, 1, 1]})
+    items = build_items(prepare_lines(sp, fx_lookup(None, "USD"), synonym_key(r["synonyms"]), r))
+    assert len(items) == 2  # one item per description, never one "nan" item per supplier
+    assert not items["item_key"].str.contains("nan").any()
+
+
+def test_size_in_mixed_notation_and_finish_words():
+    from engine.ladder import AttrMeta, analyze_text, compare_attr
+    from engine.normalize import synonym_key
+    from engine.rules import default_rules
+    k = synonym_key(default_rules()["synonyms"])
+    import engine.ladder as L
+    L._CURRENT_SYN[0] = k
+    L._PV_CACHE.clear()
+    size = AttrMeta("size", "text", vocab={"d16", "l200", "d12", "l150", "16", "200", "12", "150", "kw", "3", "1.5", "cp", "100", "300"}, size_like=True)
+    assert compare_attr(size, "D16 L200", analyze_text("SHAFT 16X200 SS", k))["result"] == "agree"
+    assert compare_attr(size, "D12 L150", analyze_text("SHAFT 16X200 SS", k))["result"] == "differ"
+    assert compare_attr(size, "3 kW", analyze_text("MTR 3KW", k))["result"] == "agree"
+    assert compare_attr(size, "1.5 kW", analyze_text("MTR 3KW", k))["result"] == "differ"
+    assert compare_attr(size, "CP-300", analyze_text("HOUSING CP300", k))["result"] == "agree"
+    assert compare_attr(size, "CP-100", analyze_text("HOUSING CP300", k))["result"] == "differ"
+    mat = AttrMeta("material", "text", vocab={"steel", "8.8", "zinc", "stainless", "a2", "bronze", "cc491k", "c45", "carbon"})
+    assert compare_attr(mat, "steel 8.8 zinc", analyze_text("Hex bolt M10x30 gr 8.8 zinc plated", k))["result"] == "agree"
+    assert compare_attr(mat, "bronze CC491K", analyze_text("Impeller 120mm bronze C90700", k))["result"] == "agree"
+    assert compare_attr(mat, "stainless A2", analyze_text("Hex cap screw M6x20 gr 8.8 zinc", k))["result"] == "differ"
+
+
+def test_discontinued_status_any_spelling():
+    from engine.bom import top_level_products
+    p = pd.DataFrame({"product_id": ["A", "B"], "status": ["active", "discontinued 2024"]})
+    out = top_level_products(fx.bom(), p).set_index("product_id")["status"]
+    assert out["B"] == "discontinued" and out["A"] == "active"

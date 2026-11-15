@@ -83,13 +83,22 @@ def normalize_text(s: str, syn_key: tuple[tuple[str, str], ...]) -> str:
     if pat is not None and t:
         t = pat.sub(lambda m: mapping.get(m.group(1), m.group(1)), t)
         # split glued words like "ss304" or "nbr90" (2+ letters then digits), then apply synonyms again
-        t2 = _GLUED_RE.sub(r"\1 \2", t)
+        t2 = _GLUED_RE.sub(lambda m: f"{m.group(1)} {m.group(2)}" if m.group(1) in mapping or m.group(1) in _CANON_WORDS(syn_key) else m.group(0), t)
         if t2 != t:
             t = pat.sub(lambda m: mapping.get(m.group(1), m.group(1)), t2)
     return _SPACE_RE.sub(" ", t).strip()
 
 
+@lru_cache(maxsize=64)
+def _CANON_WORDS(key) -> frozenset:
+    return frozenset(w for _, c in key for w in basic_clean(c).split())
+
+
 _GLUED_RE = re.compile(r"(?<![\w.])([a-z]{2,})(\d+(?:\.\d+)?)(?![\w])")
+
+
+_CODE_RE = re.compile(r"^([a-z]{1,4})(\d{2,}(?:\.\d+)?)$")
+_NUM_UNIT_RE = re.compile(r"^(\d+(?:\.\d+)?)([a-z]{1,3})$")
 
 
 def tokens(s: str) -> set[str]:
@@ -104,6 +113,12 @@ def tokens(s: str) -> set[str]:
         out.add(tok)
         if "-" in tok:
             out.update(p for p in tok.split("-") if p)
+        m2 = _CODE_RE.match(tok)
+        if m2:  # "cp200" -> cp, 200 ; "d120" -> d, 120 (codes; "ie3" stays whole)
+            out.update((m2.group(1), m2.group(2)))
+        m = _NUM_UNIT_RE.match(tok)
+        if m:  # "16mm" -> 16, mm ; "3kw" -> 3, kw
+            out.update((m.group(1), m.group(2)))
     return out
 
 
