@@ -1,0 +1,30 @@
+# Render Blueprint: Render → New → Blueprint → pick this repo.
+# Creates one always-on web service that serves the web app and the API,
+# with a persistent disk for the SQLite database, uploads and run results.
+# Same settings as the manual steps in DEPLOY.md.
+services:
+  - type: web
+    name: bomerang
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    region: ohio
+    plan: starter            # 512 MB. Use "standard" (2 GB) for files with more than a few thousand spend lines.
+    numInstances: 1          # must stay 1: data is on a disk attached to this one instance
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit   # redeploy on every push to the connected branch
+    disk:
+      name: bomerang-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: BOMERANG_DATA_DIR
+        value: /data
+      - key: ANTHROPIC_API_KEY
+        sync: false          # Render asks you for the value when you create the Blueprint
+      - key: LLM_MODEL
+        value: claude-sonnet-5-5
+      - key: AI_MAX_ITEMS
+        value: "200"
+      - key: BOMERANG_EMBEDDINGS
+        value: "0"

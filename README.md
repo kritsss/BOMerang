@@ -19,7 +19,7 @@ Open http://localhost:5173.
 
 Or with Docker: `docker compose up --build` (same ports).
 
-**Deploying to a server** (always on, free on Oracle Cloud): see [DEPLOY.md](DEPLOY.md).
+**Deploying to Render** (one always-on service for the web app and API): see [DEPLOY.md](DEPLOY.md).
 
 ### Environment variables (all optional, see `.env.example`)
 

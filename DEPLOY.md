@@ -1,160 +1,101 @@
-# Deploying BOMerang (free, always on)
+# Deploying BOMerang on Render
 
-BOMerang runs on one small Linux server: **Caddy** serves the built web app and forwards `/api/*` to the **FastAPI** container. Data (SQLite database, uploads, run results) lives in a Docker volume, so it survives restarts, reboots and redeploys. Nothing sleeps.
-
-The free server used here is an **Oracle Cloud "Always Free" Ampere A1 VM** (ARM, 2 OCPU, 12 GB RAM). Any Ubuntu server with Docker works the same way.
+BOMerang deploys as **one Render web service**: a single Docker container that serves the web app and the API from the same address (`https://<name>.onrender.com`). Data (the SQLite database, uploads and run results) lives on a **persistent disk** mounted at `/data`, so it survives restarts and redeploys. On a paid instance the service never sleeps.
 
 ```
-browser ──► :80 / :443  Caddy (web container)
-                           ├── /api/*  ──► api:8000  FastAPI + SQLite  ──► volume bomerang-data
-                           └── /*      ──► built React app (index.html fallback for deep links)
+browser ──► https://bomerang.onrender.com ──► one container (root Dockerfile)
+                                                 ├── /api/*  FastAPI
+                                                 ├── /*      built React app
+                                                 └── /data   persistent disk (SQLite, uploads, runs)
 ```
 
-Files involved:
+Files involved: `Dockerfile` (repo root), `.dockerignore`, `render.yaml` (optional one-click setup). Local development is unchanged (`make dev`, `docker compose up`).
 
-| File | What it is |
-|---|---|
-| `docker-compose.prod.yml` | Production stack: `api` (not exposed to the internet) + `web` (Caddy on 80/443). Auto-restart, health check, persistent volumes. |
-| `web/Dockerfile.prod`, `web/Caddyfile` | Builds the React app and serves it with Caddy; proxies `/api`; HTTPS when you use a domain. |
-| `scripts/oracle-setup.sh` | One-time server setup: Docker, firewall ports 80/443, first start. Safe to re-run. |
-| `scripts/backup.sh`, `scripts/restore.sh` | Backup of all data (keeps the last 7) and restore. |
+## Which plan
 
-`docker-compose.yml` and `make dev` are unchanged and still for local development.
+Measured with this app (peak memory during a full run):
 
----
+| Spend lines in one project | Plan | Price |
+|---|---|---|
+| up to ~5,000 | **Starter**, 512 MB | $7/month |
+| up to ~30,000–50,000 | **Standard**, 2 GB | $25/month |
+| more | Pro, 4 GB | $85/month |
 
-## 0. Before you start (on your Mac)
+Plus the disk: 1 GB is $0.25/month. If a run is too big for the plan, the service runs out of memory and restarts (Render emails you and the event shows in **Events**). Switch the plan under **Settings → Instance Type**; your data stays.
 
-1. Push this branch so the server can download it:
+## Option A: set it up by hand (dashboard)
+
+1. **Push this branch** to GitHub (from your Mac):
    ```bash
    cd ~/Desktop/BOMerang
-   git push -u origin feature/Deployment
+   git add -A && git commit -m "Render deployment" && git push -u origin feature/Deployment
    ```
-   (Or merge it into `main` first and use `main` below.)
-2. Make an SSH key for the server, if you don't already have one you want to use:
-   ```bash
-   ssh-keygen -t ed25519 -f ~/.ssh/oracle_bomerang -N ""
-   cat ~/.ssh/oracle_bomerang.pub      # you'll paste this into Oracle in step 2
-   ```
+2. In Render: **+ New → Web Service → Git Provider → GitHub**, and pick **kritsss/BOMerang** (connect GitHub first if asked).
+3. Fill in the form:
 
-## 1. Create the Oracle Cloud account
+   | Field | Value |
+   |---|---|
+   | Name | `bomerang` (your address becomes `bomerang.onrender.com`, or with a suffix if taken) |
+   | Project | optional, leave as is |
+   | Language | **Docker** |
+   | Branch | `feature/Deployment` (or `main` after you merge) |
+   | Region | **Ohio (US East)**, nearest to Chicago |
+   | Root Directory | leave **empty** |
+   | Instance Type | **Starter** ($7), or **Standard** ($25) for big files (see the table above) |
 
-1. Sign up at <https://www.oracle.com/cloud/free/>. A card is required for identity verification; Always Free resources are not charged.
-2. Pick your **home region** carefully (it can't be changed, and Always Free compute only runs there). A less busy region makes it easier to get an ARM VM.
+4. **Environment Variables** (same form, "Add Environment Variable"):
 
-## 2. Create the VM
+   | Key | Value |
+   |---|---|
+   | `ANTHROPIC_API_KEY` | your key (copy it from your local `.env`) |
+   | `LLM_MODEL` | `claude-sonnet-5-5` |
+   | `AI_MAX_ITEMS` | `200` |
+   | `BOMERANG_DATA_DIR` | `/data` ← must be `/data`, not `./data`, or your data is lost on every deploy |
+   | `BOMERANG_EMBEDDINGS` | `0` |
 
-In the Oracle Cloud console: **☰ → Compute → Instances → Create instance**. (Labels can differ slightly between console versions.)
+   Don't add `PORT`, `CORS_ORIGINS` or `API_URL`. Render sets the port itself, and the frontend and API share one address.
 
-1. **Name:** `bomerang`.
-2. **Image and shape → Edit:**
-   - **Image:** *Canonical Ubuntu 24.04* (not "Minimal").
-   - **Shape:** *Change shape → Ampere → VM.Standard.A1.Flex*, **2 OCPUs, 12 GB memory**. It should show "Always Free-eligible".
-   - ⚠️ Never run more than **2 OCPU / 12 GB of A1 in total** across all your instances. If you go over when the free trial ends, Oracle disables *all* your A1 instances.
-3. **Networking:** create a new virtual cloud network and public subnet (the defaults), and make sure **Assign a public IPv4 address** is on.
-4. **Add SSH keys → Paste public keys:** paste the contents of `~/.ssh/oracle_bomerang.pub`.
-5. **Boot volume:** the default (≈50 GB) is fine.
-6. Click **Create**. When it shows **Running**, copy the **Public IP address**.
+5. Open **Advanced** and set:
 
-> **"Out of capacity" / "Out of host capacity"?** Free ARM capacity runs out in busy regions. Try another *Availability domain* in the same screen, try again in a few hours, or try 1 OCPU / 6 GB now and resize to 2 / 12 later.
+   | Field | Value |
+   |---|---|
+   | Health Check Path | `/api/health` |
+   | Docker Build Context Directory | `.` |
+   | Dockerfile Path | `./Dockerfile` |
+   | Docker Command | leave empty |
+   | Pre-Deploy Command | leave empty |
+   | Auto-Deploy | **On Commit** |
+   | Disk → **Add Disk** | Name `bomerang-data`, Mount Path **`/data`**, Size **1** GB |
 
-## 3. Open ports 80 and 443 in Oracle's cloud firewall
+6. Click **Deploy Web Service**. The first build takes about 5–8 minutes. When the log shows `Uvicorn running on http://0.0.0.0:10000` and the status turns **Live**, open the URL at the top of the page. The header should say AI suggestions are on.
 
-**Instance page → the subnet link → Security Lists → Default Security List → Add Ingress Rules**, and add:
+## Option B: one click with the Blueprint
 
-| Source CIDR | IP protocol | Destination port |
-|---|---|---|
-| `0.0.0.0/0` | TCP | `80` |
-| `0.0.0.0/0` | TCP | `443` |
-| `0.0.0.0/0` | UDP | `443` (optional, enables HTTP/3) |
+`render.yaml` holds the same settings. In Render: **+ New → Blueprint**, pick the repo and branch, and paste your `ANTHROPIC_API_KEY` when asked. To use Standard instead of Starter, change `plan: starter` to `plan: standard` in `render.yaml` first, or change the instance type afterwards in the dashboard.
 
-(The server has its own firewall too; the setup script opens it.)
+## If you already have BOMerang services on Render
 
-## 4. Install and start BOMerang on the server
+Delete the old free backend and frontend services after the new one is live (**Settings → Delete Web Service / Static Site**). They are no longer needed, and the old frontend would point at the old backend.
 
-From your Mac (replace `<IP>` with the public IP):
+## Day to day
 
-```bash
-ssh -i ~/.ssh/oracle_bomerang ubuntu@<IP>
-```
-
-On the server:
-
-```bash
-git clone -b feature/Deployment https://github.com/kritsss/BOMerang.git
-exit
-```
-
-Back on your Mac, copy your `.env` (it holds your API key and is never in git):
-
-```bash
-scp -i ~/.ssh/oracle_bomerang ~/Desktop/BOMerang/.env ubuntu@<IP>:~/BOMerang/.env
-ssh -i ~/.ssh/oracle_bomerang ubuntu@<IP>
-```
-
-On the server:
-
-```bash
-cd ~/BOMerang
-bash scripts/oracle-setup.sh
-```
-
-The first build takes about 5–10 minutes. It ends with `Done. Open http://<IP>`. Open that address; the header should say AI suggestions are on (your key is working).
-
-Then **log out and back in once** (`exit`, then `ssh` again) so you can run `docker` and `make prod-*` without `sudo`.
-
-## 5. HTTPS with a free domain (recommended)
-
-1. Go to <https://www.duckdns.org>, sign in, create a subdomain (e.g. `bomerang-kritika`), and set its **current ip** to your server's public IP.
-2. On the server, edit `.env` (`nano ~/BOMerang/.env`) and set:
-   ```
-   SITE_ADDRESS=bomerang-kritika.duckdns.org
-   ```
-3. Apply it:
-   ```bash
-   cd ~/BOMerang && make prod-up
-   ```
-   Caddy gets and renews the certificate automatically. Open `https://bomerang-kritika.duckdns.org`.
-
-Your own domain works the same way: point an `A` record at the IP and put the domain in `SITE_ADDRESS`.
-
-## 6. Nightly backups
-
-```bash
-mkdir -p ~/bomerang-backups
-(crontab -l 2>/dev/null; echo "17 3 * * * $HOME/BOMerang/scripts/backup.sh >> $HOME/bomerang-backups/backup.log 2>&1") | crontab -
-```
-
-This keeps the last 7 backups in `~/bomerang-backups` on the server. To keep a copy on your Mac too:
-
-```bash
-scp -i ~/.ssh/oracle_bomerang "ubuntu@<IP>:~/bomerang-backups/*.tar.gz" ~/Desktop/
-```
-
----
-
-## Day to day (on the server, in `~/BOMerang`)
-
-| Task | Command |
+| Task | How |
 |---|---|
-| Deploy new code you pushed to GitHub | `make prod-update` |
-| See logs | `make prod-logs` (Ctrl+C to stop) |
-| Status / health | `docker compose -f docker-compose.prod.yml ps` |
-| Restart | `docker compose -f docker-compose.prod.yml restart` |
-| Change a setting in `.env` | edit, then `make prod-up` |
-| Back up now | `make prod-backup` |
-| Restore a backup (replaces current data) | `bash scripts/restore.sh ~/bomerang-backups/bomerang-YYYYMMDD-HHMMSS.tar.gz` |
+| Deploy new code | `git push`. Render rebuilds automatically. |
+| Logs | service → **Logs** |
+| Change a setting | service → **Environment** → edit → **Save, rebuild, and deploy** |
+| Bigger plan | service → **Settings → Instance Type** |
+| Backups | Render snapshots the disk automatically every 24 hours: service → **Disks** → **Snapshots** to restore |
+| Download all data | service → **Shell** (paid plans): `cd /data && tar czf /tmp/bomerang.tgz .`, or use `scp` over Render SSH |
 
-The containers restart on their own after a crash or a server reboot.
-
-**Keep the Oracle account active:** log in to the Oracle console every few weeks. Oracle can reclaim Always Free accounts that sit idle for long periods.
+Each deploy has a short downtime (under a minute) because a service with a disk stops the old instance before starting the new one. Keep **Instances = 1**: a disk can only be attached to one instance.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| Browser can't connect at all | Check step 3 (security list rules), then re-run `bash scripts/oracle-setup.sh` (re-opens the server firewall). |
-| Page loads but says the API is unreachable | `docker compose -f docker-compose.prod.yml logs api`. Usually a typo in `.env`. |
-| "AI suggestions off" | `ANTHROPIC_API_KEY` missing or wrong in `~/BOMerang/.env`; fix it, then `make prod-up`. |
-| HTTPS not working with a domain | The domain must point at the server IP *before* Caddy starts, and ports 80 and 443 must be open. See `make prod-logs`. |
-| Disk filling up after many deploys | `docker system prune -f` (removes old images; your data volume is kept). |
+| Build fails in `npm ci` or `pip install` | Open the build log; usually a lockfile or requirements change. Run `docker build .` locally to reproduce. |
+| Deploy stuck in "health check failed" | Check that Health Check Path is `/api/health` and that `PORT` is **not** set by hand. |
+| "AI suggestions off" | `ANTHROPIC_API_KEY` missing or wrong under **Environment**. |
+| Projects disappear after a deploy | `BOMERANG_DATA_DIR` isn't `/data`, or the disk's mount path isn't `/data`. |
+| Service restarts during a big run ("Out of memory" in Events) | Move up a plan (see the table above). |
