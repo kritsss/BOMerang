@@ -50,8 +50,6 @@ def readiness(data: dict[str, pd.DataFrame | None], display_currency: str, fx_ov
     add("price", "Price gate", have_spend, "Expected prices come from certain links, else standard cost.", "")
     add("ai", "AI suggestions", ai_on, "AI suggestions on." if ai_on else "AI suggestions off: no ANTHROPIC_API_KEY set. Everything else works.",
         "Set ANTHROPIC_API_KEY and restart the API.")
-    add("proof", "Proof screen", data.get("answer_key") is not None and len(data.get("answer_key")) > 0,
-        "Answer key loaded." if data.get("answer_key") is not None else "No answer key.", "Upload an answer key (line_id, true_part_id).")
 
     # currency
     missing_fx = []
