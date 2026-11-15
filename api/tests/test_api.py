@@ -120,6 +120,11 @@ def test_full_flow():
             "Learned rules", "Rule version", "Data readiness"} <= set(wb.sheetnames)
     csv = c.get(f"/api/projects/{pid}/export/links.csv")
     assert csv.status_code == 200 and b"item_id" in csv.content
+    # command-palette search (empty query and a part-id query)
+    for q in ("", part[:3]):
+        sr = c.get(f"/api/projects/{pid}/search", params={"q": q})
+        assert sr.status_code == 200, sr.text
+        assert sr.json()["parts"] and all(isinstance(p["linked"], bool) for p in sr.json()["parts"])
     # saved mapping reused on re-upload with the same headers
     again = c.post(f"/api/projects/{pid}/uploads", files=[("files", ("spend2.csv", spend.to_csv(index=False).encode(), "text/csv"))]).json()[0]
     assert again["saved_mapping"] and again["suggested_type"] == "spend"

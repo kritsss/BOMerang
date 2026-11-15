@@ -82,14 +82,14 @@ def search(pid: int, q: str = ""):
     parts = res["parts"]
     linked = set(res["items"].loc[res["items"]["status"].isin(["auto", "evidence", "human"]), "part_id"].dropna())
     pm = parts[parts["part_id"].str.lower().str.contains(ql, regex=False) | parts["description"].str.lower().str.contains(ql, regex=False)] if ql else parts
-    pm = pm.assign(_l=pm["part_id"].isin(linked)).sort_values(["_l", "part_id"], ascending=[False, True]).head(30)
+    pm = pm.assign(is_linked=pm["part_id"].isin(linked)).sort_values(["is_linked", "part_id"], ascending=[False, True]).head(30)
     sup = res["items"].groupby("supplier_name")["spend_cents"].sum().reset_index()
     if ql:
         sup = sup[sup["supplier_name"].str.lower().str.contains(ql, regex=False)]
     prods = res["products"]
     if ql:
         prods = prods[prods["product_id"].str.lower().str.contains(ql, regex=False) | prods["name"].str.lower().str.contains(ql, regex=False)]
-    return {"parts": [{"part_id": r.part_id, "description": r.description, "linked": bool(r._l)} for r in pm.itertuples(index=False)],
+    return {"parts": [{"part_id": r.part_id, "description": r.description, "linked": bool(r.is_linked)} for r in pm.itertuples(index=False)],
             "suppliers": records(sup.sort_values("spend_cents", ascending=False).head(15)),
             "products": records(prods.head(15), ["product_id", "name", "status"])}
 

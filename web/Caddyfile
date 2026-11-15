@@ -1,0 +1,29 @@
+# SITE_ADDRESS comes from .env:
+#   ":80"              -> plain HTTP on the server's IP (default)
+#   "bomerang.example.com" -> automatic HTTPS for that domain (needs DNS pointing here)
+{$SITE_ADDRESS::80} {
+	encode gzip zstd
+
+	# API: FastAPI already mounts every route under /api, so pass the path through as is.
+	handle /api/* {
+		reverse_proxy api:8000 {
+			transport http {
+				read_timeout 10m
+				write_timeout 10m
+			}
+		}
+	}
+
+	# Frontend: static files, with index.html fallback for client-side routes.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	# Hashed build assets can be cached forever; index.html must not be.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+	@html path / /index.html
+	header @html Cache-Control "no-cache"
+}
